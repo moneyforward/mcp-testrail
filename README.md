@@ -14,6 +14,7 @@ A Model Context Protocol (MCP) server that provides integration with TestRail, a
 - **add_test_result**: Add test results to test runs
 - **get_users**: Retrieve TestRail users
 - **test_connection**: Test the connection to TestRail
+- **parse_testrail_url**: 🆕 Parse TestRail URLs and auto-call appropriate tools
 
 ### Resources
 - **testrail://projects**: Access to all TestRail projects
@@ -165,6 +166,30 @@ This MCP server covers the following TestRail API endpoints:
 - `GET /get_milestones/{project_id}` - Get milestones
 
 ## Examples
+
+### URL Parsing (New Feature!)
+
+Simply paste any TestRail URL and get the data automatically:
+
+```javascript
+// Parse a test case URL
+{
+  "url": "https://moneyforward.tmxtestrail.com/index.php?/cases/view/2322865"
+}
+// Automatically detects it's a test case and retrieves case ID 2322865
+
+// Parse a test run URL  
+{
+  "url": "https://company.testrail.io/runs/view/456"
+}
+// Automatically detects it's a test run and retrieves run details
+
+// Parse test cases list with filters
+{
+  "url": "https://company.testrail.io/cases/123?suite_id=5&section_id=10"
+}
+// Automatically retrieves filtered test cases
+```
 
 ### Creating a Test Case
 

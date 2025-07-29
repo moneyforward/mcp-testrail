@@ -82,10 +82,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             projectId: {
               type: 'number',
-              description: 'The ID of the project',
+              description: 'The ID of the project (optional: uses DEFAULT_PROJECT_ID if not provided)',
             },
           },
-          required: ['projectId'],
+          required: [],
         },
       },
       {
@@ -96,7 +96,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             projectId: {
               type: 'number',
-              description: 'The ID of the project',
+              description: 'The ID of the project (optional: uses DEFAULT_PROJECT_ID if not provided)',
             },
             suiteId: {
               type: 'number',
@@ -107,7 +107,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Optional: Filter by section ID',
             },
           },
-          required: ['projectId'],
+          required: [],
         },
       },
       {
@@ -156,10 +156,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             projectId: {
               type: 'number',
-              description: 'The ID of the project',
+              description: 'The ID of the project (optional: uses DEFAULT_PROJECT_ID if not provided)',
             },
           },
-          required: ['projectId'],
+          required: [],
         },
       },
       {
@@ -170,7 +170,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             projectId: {
               type: 'number',
-              description: 'The ID of the project',
+              description: 'The ID of the project (optional: uses DEFAULT_PROJECT_ID if not provided)',
             },
             name: {
               type: 'string',
@@ -197,7 +197,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Whether to include all test cases (default: true)',
             },
           },
-          required: ['projectId', 'name'],
+          required: ['name'],
         },
       },
       {
@@ -254,6 +254,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
+      {
+        name: 'parse_testrail_url',
+        description: 'Parse a TestRail URL and automatically call the appropriate tool',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            url: {
+              type: 'string',
+              description: 'The TestRail URL to parse (e.g., test case, test run, project URLs)',
+            },
+          },
+          required: ['url'],
+        },
+      },
     ],
   };
 });
@@ -277,8 +291,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_project': {
-        const { projectId } = args as { projectId: number };
-        const project = await testRailClient.getProject(projectId);
+        const { projectId } = args as { projectId?: number };
+        const finalProjectId = projectId || testRailClient.getDefaultProjectId();
+        
+        if (!finalProjectId) {
+          throw new Error('No projectId provided and no DEFAULT_PROJECT_ID configured');
+        }
+        
+        const project = await testRailClient.getProject(finalProjectId);
         return {
           content: [
             {
@@ -291,11 +311,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'get_test_cases': {
         const { projectId, suiteId, sectionId } = args as {
-          projectId: number;
+          projectId?: number;
           suiteId?: number;
           sectionId?: number;
         };
-        const testCases = await testRailClient.getTestCases(projectId, suiteId, sectionId);
+        const finalProjectId = projectId || testRailClient.getDefaultProjectId();
+        
+        if (!finalProjectId) {
+          throw new Error('No projectId provided and no DEFAULT_PROJECT_ID configured');
+        }
+        
+        const testCases = await testRailClient.getTestCases(finalProjectId, suiteId, sectionId);
         return {
           content: [
             {
@@ -320,8 +346,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_test_runs': {
-        const { projectId } = args as { projectId: number };
-        const testRuns = await testRailClient.getTestRuns(projectId);
+        const { projectId } = args as { projectId?: number };
+        const finalProjectId = projectId || testRailClient.getDefaultProjectId();
+        
+        if (!finalProjectId) {
+          throw new Error('No projectId provided and no DEFAULT_PROJECT_ID configured');
+        }
+        
+        const testRuns = await testRailClient.getTestRuns(finalProjectId);
         return {
           content: [
             {
@@ -334,7 +366,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'create_test_run': {
         const { projectId, ...runData } = args as any;
-        const testRun = await testRailClient.createTestRun(projectId, {
+        const finalProjectId = projectId || testRailClient.getDefaultProjectId();
+        
+        if (!finalProjectId) {
+          throw new Error('No projectId provided and no DEFAULT_PROJECT_ID configured');
+        }
+        
+        const testRun = await testRailClient.createTestRun(finalProjectId, {
           include_all: true,
           ...runData,
         });
@@ -375,16 +413,141 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'test_connection': {
         const isConnected = await testRailClient.testConnection();
+        const defaultProjectId = testRailClient.getDefaultProjectId();
+        
+        let message = isConnected 
+          ? 'Connection to TestRail successful!' 
+          : 'Failed to connect to TestRail. Please check your configuration.';
+          
+        if (isConnected && defaultProjectId) {
+          message += `\nDefault Project ID: ${defaultProjectId}`;
+        } else if (isConnected) {
+          message += '\nNo default project ID configured.';
+        }
+        
         return {
           content: [
             {
               type: 'text',
-              text: isConnected 
-                ? 'Connection to TestRail successful!' 
-                : 'Failed to connect to TestRail. Please check your configuration.',
+              text: message,
             },
           ],
         };
+      }
+
+      case 'parse_testrail_url': {
+        const { url } = args as { url: string };
+        
+        try {
+          const urlObj = new URL(url);
+          const path = urlObj.pathname + urlObj.search;
+          
+          // Parse different TestRail URL patterns
+          
+          // Test Case View: /cases/view/{case_id}
+          const caseViewMatch = path.match(/\/cases\/view\/(\d+)/);
+          if (caseViewMatch) {
+            const caseId = parseInt(caseViewMatch[1]);
+            const testCase = await testRailClient.getTestCase(caseId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Detected TestRail test case URL. Retrieved case ID ${caseId}:\n\n${JSON.stringify(testCase, null, 2)}`,
+                },
+              ],
+            };
+          }
+          
+          // Test Run View: /runs/view/{run_id}
+          const runViewMatch = path.match(/\/runs\/view\/(\d+)/);
+          if (runViewMatch) {
+            const runId = parseInt(runViewMatch[1]);
+            const testRun = await testRailClient.getTestRun(runId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Detected TestRail test run URL. Retrieved run ID ${runId}:\n\n${JSON.stringify(testRun, null, 2)}`,
+                },
+              ],
+            };
+          }
+          
+          // Project View: /projects/overview/{project_id}
+          const projectViewMatch = path.match(/\/projects\/overview\/(\d+)/);
+          if (projectViewMatch) {
+            const projectId = parseInt(projectViewMatch[1]);
+            const project = await testRailClient.getProject(projectId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Detected TestRail project URL. Retrieved project ID ${projectId}:\n\n${JSON.stringify(project, null, 2)}`,
+                },
+              ],
+            };
+          }
+          
+          // Test Cases List: /cases/{project_id}
+          const casesListMatch = path.match(/\/cases\/(\d+)/);
+          if (casesListMatch) {
+            const projectId = parseInt(casesListMatch[1]);
+            
+            // Extract suite_id and section_id from query parameters if present
+            const suiteId = urlObj.searchParams.get('suite_id') ? parseInt(urlObj.searchParams.get('suite_id')!) : undefined;
+            const sectionId = urlObj.searchParams.get('section_id') ? parseInt(urlObj.searchParams.get('section_id')!) : undefined;
+            
+            const testCases = await testRailClient.getTestCases(projectId, suiteId, sectionId);
+            let message = `Detected TestRail test cases list URL. Retrieved test cases for project ID ${projectId}`;
+            if (suiteId) message += `, suite ID ${suiteId}`;
+            if (sectionId) message += `, section ID ${sectionId}`;
+            
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `${message}:\n\n${JSON.stringify(testCases, null, 2)}`,
+                },
+              ],
+            };
+          }
+          
+          // Test Runs List: /runs/{project_id}
+          const runsListMatch = path.match(/\/runs\/(\d+)/);
+          if (runsListMatch) {
+            const projectId = parseInt(runsListMatch[1]);
+            const testRuns = await testRailClient.getTestRuns(projectId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Detected TestRail test runs list URL. Retrieved test runs for project ID ${projectId}:\n\n${JSON.stringify(testRuns, null, 2)}`,
+                },
+              ],
+            };
+          }
+          
+          // If no pattern matches, provide helpful message
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `URL parsed but no matching TestRail pattern found. Supported patterns:
+- Test Case: /cases/view/{case_id}
+- Test Run: /runs/view/{run_id}  
+- Project: /projects/overview/{project_id}
+- Test Cases List: /cases/{project_id}
+- Test Runs List: /runs/{project_id}
+
+Provided URL path: ${path}`,
+              },
+            ],
+          };
+          
+        } catch (error) {
+          throw new Error(`Failed to parse URL: ${error instanceof Error ? error.message : 'Invalid URL format'}`);
+        }
       }
 
       default:
